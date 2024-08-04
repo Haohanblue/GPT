@@ -1,0 +1,180 @@
+import re
+import json
+from zhipuai import ZhipuAI
+from langchain.prompts import PromptTemplate
+import pandas as pd
+import openai
+# 设置OpenAI的API密钥
+openai.api_key="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"
+prompt_template_string_1="""
+Consider this message:{message}
+What is the sentiment, positive, negative, or neutral?
+Please pay special attention to any irrealis mood used.
+"""
+prompt_template_string_2="""
+Consider this message:{message}
+What is the sentiment, positive, negative, or neutral?
+Please pay special attention to any rhetorics (sarcasm, negative
+assertion, etc.) used.
+"""
+prompt_template_string_3="""
+Consider this message:{message}
+What is the sentiment, positive, negative, or neutral?
+Please focus on the speaker sentiment, not a third party.
+"""
+prompt_template_string_4="""
+Consider this message:{message}
+What is the sentiment, positive, negative, or neutral?
+Please focus on the stock ticker/tag/topic, not other entities.
+"""
+prompt_template_string_5="""
+Consider this message:{message}
+What is the sentiment, positive, negative, or neutral?
+Please pay special attention to the time expressions, prices, and
+other unsaid facts.
+"""
+prompt_list=[prompt_template_string_1,prompt_template_string_2,prompt_template_string_3,prompt_template_string_4,prompt_template_string_5]
+
+prompt_template_string = """
+Consider the message on a listing firm, please extract the sentiments (positive, negative, neutral) distribution (i.e., probabilities of its sentiments) from the message.\ 
+The sum of probabilities of sentiments must be equal to 1.
+The message:
+{message}
+
+Workflow:
+Considering this message: {message} and additional
+opinions from experts ,The first one is the mood agent:{expert_1}.The second one is the rhetoric agent:{expert_2}.The third one is the dependency agent:{expert_3}.The fourth one is the aspect agent:{expert_4}and the last one is reference agent:{expert_5}.
+what is the sentiment, positive/negative/neutral?evaluate the sentiments distribution of the message,make the final overall evaluation of the sentiments (positive, negative, neutral) distribution.
+
+Output requirements:
+- Output the sentiments distribution in the second step strictly following JSON format with keys of positive, negative, and neutral.
+- The sum of probabilities of sentiments must be equal to 1. 
+"""
+def gpt_chat_complete(prompt,model="gpt-4-turbo"):
+    """
+    使用智谱的glm模型进行对话"""
+
+    # 调用智谱的API进行对话
+    response = openai.ChatCompletion.create(
+        model = model,
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        temperature=0.1,
+        max_tokens=1024
+    )
+    # 返回智谱的API的响应结果
+    answer = response.choices[0].message['content']
+    return answer
+
+def extract_sentiments_json(text):
+    # Regular expression to find JSON object
+    json_pattern = r'\{.*?\}'
+    # Find all JSON objects in the text
+    json_matches = re.findall(json_pattern, text, re.DOTALL)
+    # Parse the JSON strings
+    try:
+        json_data = json.loads(json_matches[0])
+        if ("positive" in json_data) and ("negative" in json_data) and ("neutral" in json_data):
+            return json_matches[0]
+        else:
+            return None
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON: {e}")
+        return None
+def label_sentiment(message):
+    options = get_options(message,prompt_list)
+    prompt_template = PromptTemplate(template=prompt_template_string, input_variables=["message", "expert_1", "expert_2", "expert_3", "expert_4", "expert_5"])
+    prompt = prompt_template.format(message=message, expert_1=options[0], expert_2=options[1], expert_3=options[2], expert_4=options[3], expert_5=options[4])
+    p = gpt_chat_complete(prompt = prompt, model="gpt-4-turbo")
+    sentiment_dict = json.loads(extract_sentiments_json(p))
+    # 获取情感倾向的最大值
+    max_sentiment = max(sentiment_dict.values())
+    # 判断情感倾向并返回相应的值
+    if sentiment_dict['positive'] == max_sentiment:
+        return 1
+    elif sentiment_dict['negative'] == max_sentiment:
+        return -1
+    else:
+        return 0
+def expert(message,prompt_list,type):
+    prompt_template = PromptTemplate(template= prompt_list[type], input_variables=["message"])
+    prompt = prompt_template.format(message = message)
+    p = gpt_chat_complete(prompt = prompt, model="gpt-4-turbo")
+    return p
+
+def get_options(message,prompt_list):
+    options = []
+    for i in range(5):
+        result = expert(message= message, prompt_list=prompt_list, type=i)
+        options.append(result)
+    return options
+# 读取CSV文件
+df = pd.read_csv('labeldata.csv')
+# 查看数据的前几行
+df.head()
+# 随机抽样50条数据，设置随机种子
+sampled_data = df.sample(n=20, random_state=20)
+predicted = []
+labels = []
+
+# 循环获取DataFrame中的数据
+import time
+total_rows = sampled_data.shape[0]
+count = 0
+for index, row in sampled_data.iterrows():
+    # 读取Name列的内容
+    message = row['评论内容']
+    # 进行处理
+    print(f"message: {message}")
+    #time.sleep(1)
+    try:
+        predicted_label = label_sentiment(message=message)
+        print(f"predicted_label: {predicted_label}")
+        predicted.append(predicted_label) 
+        labels.append(row["label"])
+        print("acctual label: " + str(row["label"]))
+        
+        # 打印进度
+        current_progress = (count + 1) / total_rows * 100
+        count += 1
+        print(f"Progress: {current_progress:.2f}%")
+    except:
+        continue
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_auc_score
+
+# 假设labels是真实标签，predicted_labels是预测结果
+labels = labels  # 真实标签
+predicted_labels = predicted  # 预测结果
+
+#labels = new_labels  # 真实标签
+#predicted_labels = new_predicted  # 预测结果
+
+# 计算准确率
+accuracy = accuracy_score(labels, predicted_labels)
+
+# 计算精确度
+precision = precision_score(labels, predicted_labels, average='weighted')
+
+# 计算召回率
+recall = recall_score(labels, predicted_labels, average='weighted')
+
+# 计算F1分数
+f1 = f1_score(labels, predicted_labels, average='weighted')
+
+# 计算混淆矩阵
+conf_matrix = confusion_matrix(labels, predicted_labels)
+
+# 计算ROC AUC分数（如果模型输出概率）
+# roc_auc = roc_auc_score(labels, predicted_labels, multi_class='ovr')
+
+# 打印结果
+print(f"Accuracy: {accuracy}")
+print(f"Precision: {precision}")
+print(f"Recall: {recall}")
+print(f"F1 Score: {f1}")
+print(f"Confusion Matrix: {conf_matrix}")
+# print(f"ROC AUC: {roc_auc}")

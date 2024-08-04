@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "gpt"
+version = "0.1.0"
+description = ""
+authors = ["Haohanblue <haohanblue@foxmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+zhipuai = "^2.1.2"
+pandas = "^2.2.2"
+langchain = "^0.2.7"
+scikit-learn = "^1.5.1"
+openai = "0.28"
+textblob = "^0.18.0.post0"
+tqdm = "^4.66.4"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
